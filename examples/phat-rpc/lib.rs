@@ -110,6 +110,23 @@ mod phat_rpc {
     /// Type alias for the contract's result type.
     pub type Result<T> = core::result::Result<T, Error>;
 
+    pub trait ToArray<T, const N: usize> {
+        fn to_array(&self) -> [T; N];
+    }
+
+    impl<T, const N: usize> ToArray<T, N> for Vec<T>
+    where
+        T: Default + Copy,
+    {
+        fn to_array(&self) -> [T; N] {
+            let mut arr = [T::default(); N];
+            for (a, v) in arr.iter_mut().zip(self.iter()) {
+                *a = *v;
+            }
+            arr
+        }
+    }
+
     impl PhatRpc {
         #[ink(constructor)]
         pub fn new() -> Self {
@@ -363,12 +380,17 @@ mod phat_rpc {
             //let genesis_hash_raw = genesis_hash_vec[..];
             dbg!(runtime_version.transaction_version);
             // Construct our custom additional params.
+            dbg!(hex::encode(&genesis_hash_vec));
+            let genesis_hash: [u8; 32] = //primitive_types::H256::from(
+                genesis_hash_vec.to_array()
+            //)
+            ;
             let additional_params = (
                 runtime_version.spec_version,
                 runtime_version.transaction_version,
-                genesis_hash_vec.clone(),
                 // This should be configurable tx has a lifetime
-                genesis_hash_vec,
+                genesis_hash,
+                genesis_hash,
             );
             dbg!(account_nonce.next_nonce);
             dbg!(Compact(account_nonce.next_nonce));
@@ -378,6 +400,20 @@ mod phat_rpc {
                 Compact(account_nonce.next_nonce),
                 Compact(extra_param.tip),
             );
+
+            {
+                dbg!(&extra);
+                let mut stuff = Vec::new();
+                extra.encode_to(&mut stuff);
+                dbg!(hex::encode(stuff));
+            }
+
+            {
+                //dbg!(&additional_params);
+                let mut stuff = Vec::new();
+                additional_params.encode_to(&mut stuff);
+                dbg!(hex::encode(stuff));
+            }
 
             let mut bytes = Vec::new();
             call_data.encode_to(&mut bytes);
@@ -392,7 +428,11 @@ mod phat_rpc {
             dbg!(hex::encode(&public_key));
             dbg!(bytes.len());
             let signature = if bytes.len() > 256 {
-                sign(&sp_core_hashing::blake2_256(&bytes), &private_key, SigType::Sr25519)
+                sign(
+                    &sp_core_hashing::blake2_256(&bytes),
+                    &private_key,
+                    SigType::Sr25519,
+                )
             } else {
                 sign(&bytes, &private_key, SigType::Sr25519)
             };
