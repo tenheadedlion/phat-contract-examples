@@ -71,9 +71,25 @@ impl TryFrom<&[u8]> for Signature {
 #[cfg_attr(feature = "std", derive(Hash))]
 pub enum MultiSignature {
     /// An Ed25519 signature.
+    #[codec(index = 0)]
     Ed25519(Signature),
     /// An Sr25519 signature.
+    #[codec(index = 1)]
     Sr25519(Signature),
     /// An ECDSA/SECP256k1 signature.
+    #[codec(index = 2)]
     Ecdsa(Signature),
 }
+
+#[derive(Encode, Decode, PartialEq, Eq, Clone, Copy, Debug)]
+#[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+pub enum CurrencyId {
+    FREN,
+    GM,
+    GN,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Encoded(pub Vec<u8>);
+
+

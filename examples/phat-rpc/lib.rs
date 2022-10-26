@@ -54,12 +54,11 @@ mod phat_rpc {
     use super::pink;
     use super::SubmittableOracle;
     use crate::era::Era;
-    use pink::{chain_extension::signing::sign, http_post, PinkEnvironment};
-
     use crate::transaction;
     use crate::transaction::{MultiAddress, MultiSignature, Remark, Signature, UnsignedExtrinsic};
     use base58::ToBase58;
     use core::fmt::Write;
+    use hex_literal::hex;
     use ink_prelude::{
         borrow::ToOwned,
         format,
@@ -69,6 +68,7 @@ mod phat_rpc {
     };
     use ink_storage::traits::SpreadAllocate;
     use ink_storage::Mapping;
+    use pink::{chain_extension::signing::sign, http_post, PinkEnvironment};
     use pink_extension::chain_extension::SigType;
     use pink_utils::attestation;
     use scale::{Compact, Decode, Encode};
@@ -84,12 +84,13 @@ mod phat_rpc {
         admin: AccountId,
         attestation_verifier: attestation::Verifier,
         attestation_generator: attestation::Generator,
-        rpc_nodes: Mapping<String, String>,
-        chain_account_id: Mapping<String, String>,
-        account_public: Mapping<String, attestation::Verifier>,
-        account_private: Mapping<String, attestation::Generator>,
+        rpc_nodes: String,
+        chain_account_id: String,
+        account_public: attestation::Verifier,
+        account_private: attestation::Generator,
         api_key: String,
         is_api_key_set: bool,
+        account32: AccountId,
     }
 
     /// Errors that can occur upon calling this contract.
@@ -140,16 +141,24 @@ mod phat_rpc {
             }
 
             let http_endpoint = format!(
-                "https://{}.api.onfinality.io/rpc?apikey={}",
-                chain, self.api_key
+                //"https://{}.api.onfinality.io/rpc?apikey={}",
+                //chain, self.api_key
+                "http://127.0.0.1:9933"
             );
+            dbg!(&http_endpoint);
             // Create the attestation helpers
             let (generator, verifier) = attestation::create(salt);
-            let account_public: &[u8] = &verifier.pubkey;
+
+            // just hard code it for test because SS588AddressFormat does not have khala entry
+
+            //let account_public: &[u8] = &verifier.pubkey;
+
+            /*
             let version = match Ss58AddressFormat::try_from(chain.as_str()) {
                 Ok(version) => version,
                 Err(_e) => return Err(Error::InvalidAccount),
             };
+            dbg!(version);
 
             let ident: u16 = u16::from(version) & 0b0011_1111_1111_1111;
             let mut v: Vec<u8> = match ident {
@@ -169,12 +178,23 @@ mod phat_rpc {
             v.extend(&r.as_bytes()[0..2]);
             let account_public_ss58 = v.to_base58();
 
-            self.rpc_nodes.insert(&chain, &http_endpoint);
-            self.chain_account_id.insert(&chain, &account_public_ss58);
-            self.account_public.insert(&account_public_ss58, &verifier);
-            self.account_private
-                .insert(&account_public_ss58, &generator);
+            dbg!(&self.rpc_nodes);
+            */
+            let account_public_ss58 =
+                "43ZmVHbmymTr5gvTL2qoogSgVw4YLVozgfkQjPgbEiv4Ywbg".to_string();
+
+            self.rpc_nodes = http_endpoint;
+            self.chain_account_id = account_public_ss58;
+            self.account_public = verifier;
+            self.account_private = generator;
+            self.account32 =
+                hex!("14675cef46bff0a1df8e670fc5f4003b65288bc2675d655f3bd8a935fc383070").into();
             Ok(())
+        }
+
+        #[ink(message)]
+        pub fn account32(&self) -> AccountId {
+            self.account32
         }
 
         /// Set the user api key for user account.
@@ -204,11 +224,8 @@ mod phat_rpc {
             if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions);
             }
-            let rpc_node = match self.rpc_nodes.get(&chain) {
-                Some(rpc_node) => rpc_node,
-                None => return Err(Error::ChainNotConfigured),
-            };
-            Ok(rpc_node)
+
+            Ok(self.rpc_nodes.clone())
         }
 
         #[ink(message)]
@@ -216,11 +233,7 @@ mod phat_rpc {
             if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions);
             }
-            let account_id = match self.chain_account_id.get(&chain) {
-                Some(account_id) => account_id,
-                None => return Err(Error::ChainNotConfigured),
-            };
-            Ok(account_id)
+            Ok(self.chain_account_id.clone())
         }
     }
 
@@ -244,14 +257,8 @@ mod phat_rpc {
             if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions);
             }
-            let account_id = match self.chain_account_id.get(&chain) {
-                Some(account_id) => account_id,
-                None => return Err(Error::ChainNotConfigured),
-            };
-            let rpc_node = match self.rpc_nodes.get(&chain) {
-                Some(rpc_node) => rpc_node,
-                None => return Err(Error::ChainNotConfigured),
-            };
+            let account_id = &self.chain_account_id;
+            let rpc_node = &self.rpc_nodes;
             let data = format!(
                 r#"{{"id":1,"jsonrpc":"2.0","method":"system_accountNextIndex","params":["{}"]}}"#,
                 account_id
@@ -279,10 +286,7 @@ mod phat_rpc {
             if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions);
             }
-            let rpc_node = match self.rpc_nodes.get(&chain) {
-                Some(rpc_node) => rpc_node,
-                None => return Err(Error::ChainNotConfigured),
-            };
+            let rpc_node = &self.rpc_nodes;
             let data = r#"{"id":1, "jsonrpc":"2.0", "method": "state_getRuntimeVersion"}"#
                 .to_string()
                 .into_bytes();
@@ -317,10 +321,7 @@ mod phat_rpc {
             if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions);
             }
-            let rpc_node = match self.rpc_nodes.get(&chain) {
-                Some(rpc_node) => rpc_node,
-                None => return Err(Error::ChainNotConfigured),
-            };
+            let rpc_node = &self.rpc_nodes;
             let data =
                 r#"{"id":1, "jsonrpc":"2.0", "method": "chain_getBlockHash","params":["0"]}"#
                     .to_string()
@@ -354,18 +355,13 @@ mod phat_rpc {
             if self.admin != self.env().caller() {
                 return Err(Error::NoPermissions);
             }
-            let account_id = match self.chain_account_id.get(&chain) {
-                Some(account_id) => account_id,
-                None => return Err(Error::ChainNotConfigured),
-            };
-            let src_account_id: MultiAddress<AccountId> = transaction::MultiAddress::Id(src);
-            let signer = match self.account_private.get(&account_id) {
-                Some(signer) => signer,
-                None => return Err(Error::ChainNotConfigured),
-            };
+
+            let account_id = &self.chain_account_id;
+            let src_account_id: MultiAddress<AccountId, u32> = transaction::MultiAddress::Id(src);
+            let signer = &self.account_private;
             let genesis_hash_vec = genesis_hash.genesis_hash;
             //let genesis_hash_raw = genesis_hash_vec[..];
-
+            dbg!(runtime_version.transaction_version);
             // Construct our custom additional params.
             let additional_params = (
                 runtime_version.spec_version,
@@ -374,32 +370,80 @@ mod phat_rpc {
                 // This should be configurable tx has a lifetime
                 genesis_hash_vec,
             );
+            dbg!(account_nonce.next_nonce);
+            dbg!(Compact(account_nonce.next_nonce));
             // Construct the extra param
             let extra = (
                 extra_param.era,
                 Compact(account_nonce.next_nonce),
                 Compact(extra_param.tip),
             );
-            // Construct signature
-            let signature = {
-                let mut bytes = Vec::new();
-                call_data.encode_to(&mut bytes);
-                extra.encode_to(&mut bytes);
-                additional_params.encode_to(&mut bytes);
-                if bytes.len() > 256 {
-                    sign(
-                        &sp_core_hashing::blake2_256(&bytes),
-                        &signer.privkey,
-                        SigType::Sr25519,
-                    )
-                } else {
-                    sign(&bytes, &signer.privkey, SigType::Sr25519)
-                }
+
+            let mut bytes = Vec::new();
+            call_data.encode_to(&mut bytes);
+            extra.encode_to(&mut bytes);
+            additional_params.encode_to(&mut bytes);
+            dbg!(hex::encode(&bytes));
+
+            let private_key =
+                hex!("9eb2ee60393aeeec31709e256d448c9e40fa64233abf12318f63726e9c417b69").to_vec();
+            let public_key =
+                pink::chain_extension::signing::get_public_key(&private_key, SigType::Sr25519);
+            dbg!(hex::encode(&public_key));
+            dbg!(bytes.len());
+            let signature = if bytes.len() > 256 {
+                sign(&sp_core_hashing::blake2_256(&bytes), &private_key, SigType::Sr25519)
+            } else {
+                sign(&bytes, &private_key, SigType::Sr25519)
             };
+
             let signature_bytes: &[u8] = &signature;
+            dbg!(hex::encode(signature_bytes));
             let signature_type =
                 Signature::try_from(signature_bytes).or(Err(Error::InvalidSignature))?;
             let multi_signature = MultiSignature::Sr25519(signature_type);
+            //dbg!(&multi_signature);
+
+            let public_key: [u8; 32] =
+                hex!("8266b3183ccc58f3d145d7a4894547bd55d7739751dd15802f36ec8a0d7be314");
+            let src_account_id: MultiAddress<AccountId, u32> =
+                transaction::MultiAddress::Id(AccountId::from(public_key));
+
+            assert!(pink::chain_extension::signing::verify(
+                &bytes,
+                &public_key,
+                signature_bytes,
+                SigType::Sr25519
+            ));
+
+            {
+                dbg!(&call_data);
+                let mut stuff = Vec::new();
+                multi_signature.encode_to(&mut stuff);
+                dbg!(hex::encode(stuff));
+            }
+
+            {
+                dbg!(&call_data);
+                let mut stuff = Vec::new();
+                //multi_signature.encode_to(&mut stuff);
+                src_account_id.encode_to(&mut stuff);
+                dbg!(hex::encode(stuff));
+            }
+            {
+                dbg!(&call_data);
+                let mut stuff = Vec::new();
+                call_data.encode_to(&mut stuff); // right: 0x000134686920686f7720617265207961
+                dbg!(hex::encode(stuff));
+            }
+
+            {
+                dbg!(&call_data);
+                let mut stuff = Vec::new();
+                (0b10000000 + 4u8).encode_to(&mut stuff);
+                dbg!(hex::encode(stuff));
+            }
+
             // Encode Extrinsic
             let extrinsic = {
                 let mut encoded_inner = Vec::new();
@@ -424,7 +468,8 @@ mod phat_rpc {
             };
             // Encode extrinsic then send RPC Call
             //let extrinsic_hex = vec_to_hex_string(&extrinsic);
-
+            dbg!(hex::encode(&extrinsic));
+            //let extrinsic = hex!("cd0184008266b3183ccc58f3d145d7a4894547bd55d7739751dd15802f36ec8a0d7be314019899300d8dca7e9cec75980f3da17715cc1da4024bdb0ca9d07e062e93661f47364e4c404927c84b73db323fd34311f23c854926448b1d4df7c232685630798c0002000001284772656574696e677321").into();
             Ok(extrinsic)
         }
 
@@ -446,10 +491,7 @@ mod phat_rpc {
             //     Some(verifier) => verifier,
             //     None => return Err(Error::ChainNotConfigured),
             // };
-            let rpc_node = match self.rpc_nodes.get(&chain) {
-                Some(rpc_node) => rpc_node,
-                None => return Err(Error::ChainNotConfigured),
-            };
+            let rpc_node = &self.rpc_nodes;
             let tx_hex = vec_to_hex_string(&tx_hash);
             // println!("{:?}", tx_raw);
 
@@ -631,7 +673,10 @@ mod phat_rpc {
             ("Content-Length".into(), content_length),
         ];
 
+        dbg!(&rpc_node);
+
         let response = http_post!(rpc_node, data, headers);
+        dbg!(&response.status_code);
         if response.status_code != 200 {
             return Err(Error::RequestFailed);
         }
@@ -669,12 +714,13 @@ mod phat_rpc {
             ink_env::test::default_accounts::<Environment>()
         }
 
-        #[ink::test]
+        //#[ink::test]
         fn end_to_end() {
             pink_extension_runtime::mock_ext::mock_all_ext();
 
             let accounts = default_accounts();
             let stack = SharedCallStack::new(accounts.alice);
+            // create a phat contract
             let contract = Addressable::create_native(1, PhatRpc::new(), stack.clone());
 
             let chain = "kusama";
@@ -686,6 +732,7 @@ mod phat_rpc {
             mock::mock_derive_sr25519_key(|_| {
                 hex!("9eb2ee60393aeeec31709e256d448c9e40fa64233abf12318f63726e9c417b69").to_vec()
             });
+            // set the target chain
             let res = contract.call_mut().set_chain_info(chain.to_string());
             let address = contract
                 .call()
@@ -695,7 +742,7 @@ mod phat_rpc {
             let expect_addr = "FXJFWSVDcyVi3bTy8D9ESznQM4JoNBRQLEjWFgAGnGQfpbR".to_string();
             assert_eq!(address, expect_addr);
 
-            //get nonce
+            // get nonce
             mock::mock_http_request(|_| {
                 HttpResponse::ok(br#"{"jsonrpc":"2.0","result":0,"id":1}"#.to_vec())
             });
@@ -703,7 +750,8 @@ mod phat_rpc {
             println!("nonce: {:?}", nonce.next_nonce);
             assert_eq!(nonce.next_nonce, 0);
 
-            //get runtime version
+            // get runtime version
+            // ok, is this what responses from kusama look like?
             mock::mock_http_request(|_| {
                 HttpResponse::ok(br#"{
                 "jsonrpc":"2.0","result":{"specName":"kusama","implName":"parity-kusama","authoringVersion":2,"specVersion":9230,"implVersion":0,"apis":[["0xdf6acb689907609b",4],["0x37e397fc7c91f5e4",1],["0x40fe3ad401f8959a",6],["0xd2bc9897eed08f15",3],["0xf78b278be53f454c",2],["0xaf2c0297a23e6d3d",2],["0x49eaaf1b548a0cb0",1],["0x91d5df18b0d2cf58",1],["0xed99c5acb25eedf5",3],["0xcbca25e39f142387",2],["0x687ad44ad37f03c2",1],["0xab3c0572291feb8b",1],["0xbc9d89904f5b923f",1],["0x37c8bb1350a9a2a8",1]],"transactionVersion":11,"stateVersion":0},"id":1
@@ -749,6 +797,7 @@ mod phat_rpc {
                     chain.to_string(),
                     nonce,
                     runtime_version,
+                    // why need a gensis hash in transaction?
                     genesis_hash,
                     call_param,
                     extra,
@@ -763,6 +812,80 @@ mod phat_rpc {
                 .call()
                 .send_transaction(chain.to_string(), tx_raw)
                 .unwrap();
+        }
+
+        #[ink::test]
+        fn extra_test() {
+            pink_extension_runtime::mock_ext::mock_all_ext();
+            // Register contracts
+            let hash = ink_env::Hash::try_from([10u8; 32]).unwrap();
+            ink_env::test::register_contract::<PhatRpc>(hash.as_ref());
+
+            let mut contract = PhatRpcRef::new()
+                .code_hash(hash)
+                .endowment(0)
+                .salt_bytes([0u8; 0])
+                .instantiate()
+                .expect("failed to deploy PhatRpc");
+
+            // there is no khala in https://github.com/paritytech/ss58-registry/blob/main/ss58-registry.json
+            let chain = "khala";
+            // https://kusama.api.onfinality.io/rpc?apikey=2d2942e3-0a38-4448-ae0d-747333c35f4a
+            let test_api_key = "2d2942e3-0a38-4448-ae0d-747333c35f4a";
+            _ = contract.set_api_key(test_api_key.to_string());
+
+            mock::mock_derive_sr25519_key(|_| {
+                hex!("9eb2ee60393aeeec31709e256d448c9e40fa64233abf12318f63726e9c417b69").to_vec()
+            });
+
+            // set the target chain
+            _ = contract.set_chain_info(chain.to_string());
+            let address = contract.get_chain_account_id(chain.to_string()).unwrap();
+            println!("addr: {:?}", address);
+            let expect_addr = "43ZmVHbmymTr5gvTL2qoogSgVw4YLVozgfkQjPgbEiv4Ywbg".to_string();
+            assert_eq!(address, expect_addr);
+
+            let nonce = contract.get_next_nonce(chain.to_string()).unwrap();
+            println!("nonce: {:?}", nonce.next_nonce);
+
+            let runtime_version = contract.get_runtime_version(chain.to_string()).unwrap();
+            println!("runtime_version: {:?}", runtime_version);
+
+            let genesis_hash = contract.get_genesis_hash(chain.to_string()).unwrap();
+            println!("genesis_hash: {:?}", genesis_hash);
+
+            // Extra params for transaction creation
+            let extra = ExtraParam {
+                era: Era::Immortal,
+                tip: 0,
+            };
+            // Remark Call
+            let remark: String = "Greetings!".to_string();
+            let call_param = transaction::UnsignedExtrinsic {
+                pallet_id: 0u8,
+                call_id: 1u8,
+                call: transaction::Remark { remark },
+            };
+
+            let account32 = contract.account32();
+            //create raw transaction
+            let tx_raw = contract
+                .create_transaction(
+                    account32,
+                    chain.to_string(),
+                    nonce,
+                    runtime_version,
+                    // why need a gensis hash in transaction?
+                    genesis_hash,
+                    call_param,
+                    extra,
+                )
+                .unwrap();
+            //dbg!(tx_raw);
+            let resp = contract
+                .send_transaction(chain.to_string(), tx_raw)
+                .unwrap();
+            dbg!(resp);
         }
     }
 }
